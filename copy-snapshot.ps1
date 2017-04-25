@@ -1,6 +1,5 @@
 Param(
     [string] $subscriptionId, #destination/target subscription
-    [string] $servicePrincipalIdentifierUri,
     [securestring] $servicePrincipalPassword,
     [string] $snapshotName,
     [string] $resourceGroupName,
@@ -13,7 +12,7 @@ Param(
 # See https://docs.microsoft.com/en-us/rest/api/manageddisks/snapshots/snapshots-create-or-update
 
 
-# Get credentials to an Azure AD service principal, which is used to get an authentication token for autenticating with the Azure management REST API
+# Get credentials to an Azure AD service principal, which is used to get an authentication token for authenticating with the Azure management REST API
 $result = Invoke-RestMethod -Uri "https://login.microsoftonline.com/${tenantId}/oauth2/token?api-version=1.0" `
                   -Method Post `
                   -Body @{

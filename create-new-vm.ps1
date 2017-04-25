@@ -10,7 +10,7 @@ Param(
 # ARM template used to create the initial VM
 $templateUri = 'https://raw.githubusercontent.com/Azure/azure-quickstart-templates/master/101-vm-with-rdp-port/azuredeploy.json'
 
-$dnsPrefix = $vmName + "-" + -join ((97..122) | Get-Random -Count 7 | % {[char]$_})
+$dnsPrefix = $vmName + "-" + -join ((97..122) | Get-Random -Count 7 | ForEach-Object {[char]$_})
 
 $currentDate = Get-Date -Format yyyyMMdd.HHmmss
 $deploymentLabel = "vmdeploy-$currentDate"

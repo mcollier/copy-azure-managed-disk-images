@@ -61,7 +61,7 @@ $deploymentLabel = "vmimage-$currentDate"
 
 $image = Get-AzureRmImage -ResourceGroupName $resourceGroupName -ImageName $imageName
 
-$dnsPrefix = "myvm-" + -join ((97..122) | Get-Random -Count 7 | % {[char]$_})
+$dnsPrefix = "myvm-" + -join ((97..122) | Get-Random -Count 7 | ForEach-Object {[char]$_})
 
 $creds = Get-Credential -Message "Enter username and password for new VM."
 
@@ -73,7 +73,7 @@ $templateParams = @{
     managedImageResourceId = $image.Id
 }
 
-# Put the dummy VM in a seperate resource group as it makes it super easy to clean up all the extra stuff that goes with a VM (NIC, IP, VNet, etc.)
+# Put the dummy VM in a separate resource group as it makes it super easy to clean up all the extra stuff that goes with a VM (NIC, IP, VNet, etc.)
 $rgNameTemp = $resourceGroupName + "-temp"
 New-AzureRmResourceGroup -Location $region `
                          -Name $rgNameTemp
