@@ -23,18 +23,17 @@ New-AzureRmSnapshot -ResourceGroupName $resourceGroupName -Snapshot $snapshot -S
 
 
 # ----- 6. Copy the snapshot to the second subscription -----
-# Azure Powershell modules do not yet have the capability to copy Managed Disk snapshots across subscriptions.
-# Use the Azure management REST API instead.
-# See https://docs.microsoft.com/en-us/rest/api/manageddisks/snapshots/snapshots-create-or-update
-
 $snap = Get-AzureRmSnapshot -ResourceGroupName $resourceGroupName -SnapshotName $snapshotName
-.\copy-snapshot.ps1 -subscriptionId $destinationSubscriptionId `
-                    -servicePrincipalIdentifierUri $servicePrincipalName `
-                    -servicePrincipalPassword $servicePrincipalPassword `
-                    -snapshotName $snapshotName `
-                    -resourceGroupName $resourceGroupName `
-                    -region $destinationRegion `
-                    -sourceSnapshotId $snap.Id
+
+Select-AzureRmSubscription -SubscriptionId $targetSubscriptionId
+$snapshotConfig = New-AzureRmSnapshotConfig -OsType Windows `
+                                            -Location $region `
+                                            -CreateOption Copy `
+                                            -SourceResourceId $snap.Id
+
+$snap = New-AzureRmSnapshot -ResourceGroupName $resourceGroupName `
+                            -SnapshotName $snapshotName `
+                            -Snapshot $snapshotConfig    
 
 
 # ----- 7. In the second subscription, create a new Image from the copied snapshot -----
@@ -54,6 +53,7 @@ New-AzureRmImage -ResourceGroupName $resourceGroupName `
                  -Image $imageConfig
 
 (Get-AzureRmImage -ResourceGroupName $resourceGroupName) | Select-Object Name, Location, ProvisioningState
+
 
 # ----- 8. In the second subscription, create a new VM from the new Image. -----
 $currentDate = Get-Date -Format yyyyMMdd.HHmmss
@@ -84,13 +84,14 @@ New-AzureRmResourceGroupDeployment  -Name $deploymentLabel `
                                     -TemplateUri 'https://raw.githubusercontent.com/mcollier/copy-azure-managed-disk-images/master/azuredeploy.json' `
                                     -Verbose
                                     
-# TODO: Submit template to Azure QuickStart Template gallery? Create a Managed Disk VM from a Managed Disk Image. 
 
 # ----- 9. Delete the snapshot in the second subscription -----
 Remove-AzureRmSnapshot -ResourceGroupName $resourceGroupName -SnapshotName $snapshotName -Force
 
+
 # ----- 10. Delete the VM created in step 8. -----
 Remove-AzureRmResourceGroup -Name $rgNameTemp -Force
+
 
 # ----- 11. Switch back to the source (original) subscription and delete the original snapshot. -----
 Select-AzureRmSubscription -SubscriptionId $sourceSubscriptionId

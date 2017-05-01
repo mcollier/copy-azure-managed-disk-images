@@ -25,17 +25,14 @@ $destinationSubscriptionId = '{YOUR-DESTINATION-AZURE-SUBSCRIPTION-ID}'
 $tenantId = '{YOUR-AZURE-AD-TENANT-ID}'
 $resourceGroup = 'mcollier-myimages'
 $region = 'northcentralus'
-$servicePrincipalName = 'https://localhost/azure-image-copy'
 
 $vmName = 'mcolliervm1'
 $imageName = "mcollierimage001"
 
-<# -- OPTIONAL - Create a new Service Principal -- #>
-<#
-# Login with interactive authentication to create the Service Principal
-Login-AzureRmAccount -SubscriptionId $sourceSubscriptionId
+<# -- Login with an interactive session. - #>
+# Login-AzureRmAccount -SubscriptionId $sourceSubscriptionId
 
-# Ensure resource group is created in both subscriptions
+<# -- OPTIONAL - Create the source and target resource groups in both subscriptions. -- #>
 $myTags = @{}
 $myTags.Add("alias", "mcollier")
 $myTags.Add("deleteAfter", "04/30/2017")
@@ -44,19 +41,9 @@ New-AzureRmResourceGroup -Name $resourceGroup -Location $region -Tag $myTags -Fo
 Select-AzureRmSubscription -SubscriptionId $destinationSubscriptionId
 New-AzureRmResourceGroup -Name $resourceGroup -Location $region -Tag $myTags -Force
 
-Select-AzureRmSubscription -SubscriptionId $sourceSubscriptionId
-
-$sp_pwd = Read-Host -Prompt "Enter password for service principal."
-.\create_service_principal.ps1 -sourceSubscriptionId $sourceSubscriptionId `
-                               -destinationSubscriptionId $destinationSubscriptionId `
-                               -resourceGroupName $resourceGroup `
-                               -servicePrincipalName $servicePrincipalName `
-                               -servicePrincipalPassword $sp_pwd
-#>
 
 <# -- OPTIONAL - Create a new VM --#>
 <#
-# Login with interactive authentication to create the Service Principal
 Login-AzureRmAccount -SubscriptionId $sourceSubscriptionId
 
 $vmPwd = Read-Host -Prompt "Enter password for VM." -AsSecureString
@@ -83,19 +70,90 @@ $image = New-AzureRmImageConfig -Location $region -SourceVirtualMachineId $vm.Id
 New-AzureRmImage -Image $image -ImageName $imageName -ResourceGroupName $resourceGroupName
 #>
 
-<# -- Run under the context of a Service Principal -- #>
-#$sp_pwd = Read-Host -Prompt "Enter password for service principal." -AsSecureString
-$pwd = "test!123"
-$sp_pwd = ConvertTo-SecureString $pwd -AsPlainText -Force
-$secureCredential = New-Object System.Management.Automation.PSCredential($servicePrincipalName, $sp_pwd)
-Login-AzureRmAccount -Credential $secureCredential -SubscriptionId $sourceSubscriptionId -TenantId $tenantId -ServicePrincipal
 
-& '.\copy-managed-disk-image.ps1' -sourceSubscriptionId $sourceSubscriptionId `
-                                  -destinationSubscriptionId $destinationSubscriptionId `
-                                  -resourceGroupName $resourceGroup `
-                                  -sourceRegion $region `
-                                  -destinationRegion $region `
-                                  -imageName $imageName `
-                                  -vmName $vmName `
-                                  -servicePrincipalName $servicePrincipalName `
-                                  -servicePrincipalPassword $sp_pwd
+$snapshotName = $imageName + $sourceRegion + "-snap"
+
+
+# ----- 5. Create a snapshot of the OS (and optionally data disks) from the generalized VM -----
+# TODO - SUPPORT DATA DISKS
+$vm = Get-AzureRmVM -ResourceGroupName $resourceGroupName -Name $vmName
+$disk = Get-AzureRmDisk -ResourceGroupName $resourceGroupName -DiskName $vm.StorageProfile.OsDisk.Name
+$snapshot = New-AzureRmSnapshotConfig -SourceUri $disk.Id -CreateOption Copy -Location $sourceRegion
+
+New-AzureRmSnapshot -ResourceGroupName $resourceGroupName -Snapshot $snapshot -SnapshotName $snapshotName
+
+
+# ----- 6. Copy the snapshot to the second subscription -----
+$snap = Get-AzureRmSnapshot -ResourceGroupName $resourceGroupName -SnapshotName $snapshotName
+
+Select-AzureRmSubscription -SubscriptionId $targetSubscriptionId
+$snapshotConfig = New-AzureRmSnapshotConfig -OsType Windows `
+                                            -Location $region `
+                                            -CreateOption Copy `
+                                            -SourceResourceId $snap.Id
+
+$snap = New-AzureRmSnapshot -ResourceGroupName $resourceGroupName `
+                            -SnapshotName $snapshotName `
+                            -Snapshot $snapshotConfig    
+
+
+# ----- 7. In the second subscription, create a new Image from the copied snapshot -----
+Select-AzureRmSubscription -SubscriptionId $destinationSubscriptionId
+
+$snap = Get-AzureRmSnapshot -ResourceGroupName $resourceGroupName -SnapshotName $snapshotName
+
+$imageConfig = New-AzureRmImageConfig -Location $destinationRegion
+ 
+Set-AzureRmImageOsDisk -Image $imageConfig `
+                        -OsType Windows `
+                        -OsState Generalized `
+                        -SnapshotId $snap.Id
+ 
+New-AzureRmImage -ResourceGroupName $resourceGroupName `
+                 -ImageName $imageName `
+                 -Image $imageConfig
+
+(Get-AzureRmImage -ResourceGroupName $resourceGroupName) | Select-Object Name, Location, ProvisioningState
+
+
+# ----- 8. In the second subscription, create a new VM from the new Image. -----
+$currentDate = Get-Date -Format yyyyMMdd.HHmmss
+$deploymentLabel = "vmimage-$currentDate"
+
+$image = Get-AzureRmImage -ResourceGroupName $resourceGroupName -ImageName $imageName
+
+$dnsPrefix = "myvm-" + -join ((97..122) | Get-Random -Count 7 | ForEach-Object {[char]$_})
+
+$creds = Get-Credential -Message "Enter username and password for new VM."
+
+$templateParams = @{
+    vmName = $vmName; 
+    adminUserName = $creds.UserName; 
+    adminPassword = $creds.Password; 
+    dnsLabelPrefix = $dnsPrefix
+    managedImageResourceId = $image.Id
+}
+
+# Put the dummy VM in a separate resource group as it makes it super easy to clean up all the extra stuff that goes with a VM (NIC, IP, VNet, etc.)
+$rgNameTemp = $resourceGroupName + "-temp"
+New-AzureRmResourceGroup -Location $region `
+                         -Name $rgNameTemp
+
+New-AzureRmResourceGroupDeployment  -Name $deploymentLabel `
+                                    -ResourceGroupName $rgNameTemp `
+                                    -TemplateParameterObject $templateParams `
+                                    -TemplateUri 'https://raw.githubusercontent.com/mcollier/copy-azure-managed-disk-images/master/azuredeploy.json' `
+                                    -Verbose
+                                    
+
+# ----- 9. Delete the snapshot in the second subscription -----
+Remove-AzureRmSnapshot -ResourceGroupName $resourceGroupName -SnapshotName $snapshotName -Force
+
+
+# ----- 10. Delete the VM created in step 8. -----
+Remove-AzureRmResourceGroup -Name $rgNameTemp -Force
+
+
+# ----- 11. Switch back to the source (original) subscription and delete the original snapshot. -----
+Select-AzureRmSubscription -SubscriptionId $sourceSubscriptionId
+Remove-AzureRmSnapshot -ResourceGroupName $resourceGroupName -SnapshotName $snapshotName
