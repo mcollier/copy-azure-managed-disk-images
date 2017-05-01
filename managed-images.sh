@@ -1,24 +1,21 @@
 #!/bin/bash
 
 #Azure Subscription variables
-ClientID="{your-client-id}" #ApplicationID
-ClientSecret="{your-client-secret}"  #key from Application
-TennantID="{your-azuread-tenantid}"
 SubscriptionID="{your-azure-subscription-id}"
 ResourceGroupName="myimages"
-ResourceGroupName="my-vm-temp"
+ResourceGroupNameTemp="my-vm-temp"
 TargetSubscriptionID="{your-other-azure-subscription-id}"
 
 imageName="my-vm-image-1"
 location="northcentralus"
-snapshotName="my-vm-image-1-$location-snap"
+snapshotName="$imageName-$location-snap"
+imageStorageContainerName="images"
+targetStorageAccountName="myimageswestcentus"
+targetLocation="westcentralus"
 
-#az login --service-principal \
-#	-u $ClientID \
-#	--password $ClientSecret \
-#	--tenant $TennantID
+az login
 
-echo "Changing subscription to $SubscriptionID"	
+echo "Changing subscription to $SubscriptionID"
 az account set --subscription $SubscriptionID
 #az account show
 
@@ -35,7 +32,7 @@ az account set --subscription $SubscriptionID
 #	--name $imageName \
 #	--location $location \
 #	--os-type Windows \
-#	--source $vmid 
+#	--source $vmid
 
 
 # ------ Create an snapshot ------
@@ -53,6 +50,92 @@ az account set --subscription $SubscriptionID
 # change to the target subscription
 #az account set --subscription $TargetSubscriptionID
 #az snapshot create -g $ResourceGroupName -n $snapshotName --source $snapshotId
+
+
+
+# ----- Copy the snapshot to another region, same subscription
+#set the source subscription (to be sure)
+#az account set --subscription $SubscriptionID
+#snapshotId=$(az snapshot show -g $ResourceGroupName -n $snapshotName --query "id" -o tsv )
+
+#echo "SnapshotId is $snapshotId"
+
+# Get the SAS for the snapshotId
+#snapshotSasUrl=$(az snapshot grant-access -g $ResourceGroupName -n $snapshotName --duration-in-seconds 3600 -o tsv)
+#echo "Snapshot SAS URL is $snapshotSasUrl"
+
+# Setup the target storage account in another region
+#targetStorageAccountKey=$(az storage account keys list -g $ResourceGroupName --account-name $targetStorageAccountName --query "[:1].value" -o tsv)
+#echo "Target storage account key is $targetStorageAccountKey"
+
+#storageSasToken=$(az storage account generate-sas --expiry 2017-05-02'T'12:00'Z' --permissions aclrpuw --resource-types sco --services b --https-only --account-name $targetStorageAccountName --account-key $targetStorageAccountKey -o tsv)
+#echo "Target storage SAS URL is $storageSasToken"
+
+#az storage container create -n $imageStorageContainerName --account-name $targetStorageAccountName --sas-token $storageSasToken
+
+# Copy the snapshot to the target region using the SAS URL
+#imageBlobName = "$imageName-osdisk.vhd"
+#copyId=$(az storage blob copy start --source-uri $snapshotSasUrl --destination-blob $imageBlobName --destination-container $imageStorageContainerName --sas-token $storageSasToken --account-name $targetStorageAccountName)
+
+# Figure out when the copy is destination-container
+# TODO: Put this in a loop until status is 'success'
+#az storage blob show --container-name $imageStorageContainerName -n $imageBlobName --account-name $targetStorageAccountName --sas-token $storageSasToken --query "properties.copy.status"
+
+# Get the URI to the blob
+
+#blobEndpoint=$(az storage account show -g $ResourceGroupName -n $targetStorageAccountName --query "primaryEndpoints.blob" -o tsv)
+#osDiskVhdUri="$blobEndpoint$imageStorageContainerName/$imageBlobName"
+
+#echo "VHD OS Disk Url is $osDiskVhdUri"
+
+# Create the snapshot in the target region
+#snapshotName="$imageName-$targetLocation-snap"
+#az snapshot create -g $ResourceGroupName -n $snapshotName -l $targetLocation --source $osDiskVhdUri
+
+
+
+
+# ----- Copy the snapshot to another region, DIFFERENT subscription
+#set the source subscription (to be sure)
+#targetStorageAccountName="myimageswestcentus3"
+#az account set --subscription $SubscriptionID
+#snapshotId=$(az snapshot show -g $ResourceGroupName -n $snapshotName --query "id" -o tsv )
+
+#echo "SnapshotId is $snapshotId"
+
+# Get the SAS for the snapshotId
+#snapshotSasUrl=$(az snapshot grant-access -g $ResourceGroupName -n $snapshotName --duration-in-seconds 3600 -o tsv)
+#echo "Snapshot SAS URL is $snapshotSasUrl"
+
+# Switch to the DIFFERENT subscription
+#az account set --subscription $TargetSubscriptionID
+
+# Setup the target storage account in another region
+#targetStorageAccountKey=$(az storage account keys list -g $ResourceGroupName --account-name $targetStorageAccountName --query "[:1].value" -o tsv)
+#echo "Target storage account key is $targetStorageAccountKey"
+
+#storageSasToken=$(az storage account generate-sas --expiry 2017-05-02'T'12:00'Z' --permissions aclrpuw --resource-types sco --services b --https-only --account-name $targetStorageAccountName --account-key $targetStorageAccountKey -o tsv)
+#echo "Target storage SAS URL is $storageSasToken"
+
+#az storage container create -n $imageStorageContainerName --account-name $targetStorageAccountName --sas-token $storageSasToken
+
+# Copy the snapshot to the target region using the SAS URL
+#imageBlobName = "$imageName-osdisk.vhd"
+#copyId=$(az storage blob copy start --source-uri $snapshotSasUrl --destination-blob $imageBlobName --destination-container $imageStorageContainerName --sas-token $storageSasToken --account-name $targetStorageAccountName)
+
+# Figure out when the copy is destination-container
+# TODO: Put this in a loop until status is 'success'
+#az storage blob show --container-name $imageStorageContainerName -n $imageBlobName --account-name $targetStorageAccountName --sas-token $storageSasToken --query "properties.copy.status"
+
+# Get the URI to the blob
+#blobEndpoint=$(az storage account show -g $ResourceGroupName -n $targetStorageAccountName --query "primaryEndpoints.blob" -o tsv)
+#osDiskVhdUri="$blobEndpoint$imageStorageContainerName/$imageBlobName"
+
+#echo "VHD OS Disk Url is $osDiskVhdUri"
+
+# Create the snapshot in the target region
+#snapshotName="$imageName-$targetLocation-snap"
+#az snapshot create -g $ResourceGroupName -n $snapshotName -l $targetLocation --source $osDiskVhdUri
 
 
 # ------ Create an image from the snapshot ------
